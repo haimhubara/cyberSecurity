@@ -1,9 +1,14 @@
 import { Router, Request, Response } from "express";
 import { pool } from "../db";
+import net from "net";
 
 const router = Router();
 
-//READ
+function isValidIP(ip: string): boolean {
+  return net.isIP(ip) !== 0; 
+}
+
+// READ
 router.get("/ip", async (req: Request, res: Response) => {
   const { id, category } = req.query;
 
@@ -23,18 +28,22 @@ router.get("/ip", async (req: Request, res: Response) => {
   }
 });
 
-//CREATE
+// CREATE
 router.post("/ip", async (req: Request, res: Response) => {
-  const { values, mode } = req.body; 
+  const { values, mode } = req.body;
 
   if (!values || !Array.isArray(values) || !mode) {
     return res.status(400).send("values (array) and mode are required");
   }
 
   try {
- 
-    const insertedValues = [];
+    const insertedValues: string[] = [];
+
     for (const ip of values) {
+      if (!isValidIP(ip)) {
+        return res.status(400).json({ error: `Invalid IP: ${ip}` });
+      }
+
       const result = await pool.query(
         "INSERT INTO firewall_ips (category, ip) VALUES ($1, $2) RETURNING ip",
         [mode, ip]
@@ -54,16 +63,28 @@ router.post("/ip", async (req: Request, res: Response) => {
   }
 });
 
-//UPDATE
+// UPDATE
 router.put("/ip", async (req: Request, res: Response) => {
-  const { id, category, ip } = req.body; 
-  if (!id || !category || !ip) return res.status(400).send("id, category and ip are required");
+  const { id, category, ip } = req.body;
+
+  if (!id || !category || !ip) {
+    return res.status(400).send("id, category and ip are required");
+  }
+
+  if (!isValidIP(ip)) {
+    return res.status(400).json({ error: `Invalid IP: ${ip}` });
+  }
 
   try {
     const result = await pool.query(
       "UPDATE firewall_ips SET category=$1, ip=$2 WHERE id=$3 RETURNING *",
       [category, ip, id]
     );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Record not found" });
+    }
+
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -71,9 +92,9 @@ router.put("/ip", async (req: Request, res: Response) => {
   }
 });
 
-//DELETE
+// DELETE
 router.delete("/ip", async (req: Request, res: Response) => {
-  const { values, mode } = req.body; // values = מערך IPs, mode = "blacklist" או "whitelist"
+  const { values, mode } = req.body;
 
   if (!values || !Array.isArray(values) || !mode) {
     return res.status(400).send("values (array) and mode are required");
