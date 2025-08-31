@@ -14,6 +14,12 @@ const envSchema = z.object({
 
   DATABASE_URI_DEV: z.url(),
   DATABASE_URI_PROD: z.url(),
+  DB_CONNECTION_INTERVAL: z
+    .string()
+    .transform((val) => Number(val))
+    .refine((num) => !isNaN(num) && num > 0, {
+      message: "DB_CONNECTION_INTERVAL must be a positive number (ms)",
+    }),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -32,6 +38,7 @@ export const config = {
   env: env.ENV,
   port: Number(env.PORT),
   databaseUri,
+  dbConnectionInterval: env.DB_CONNECTION_INTERVAL,
   constants: {
     APP_NAME: "MyApp",
     FIREWALL_IPS_TABLE: "firewall_ips",
