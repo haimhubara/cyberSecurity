@@ -1,9 +1,10 @@
 import { Router, Request, Response } from "express";
-import { pool } from "../config/db";
+import db from "../config/db";
+import { firewallUrls } from "../drizzle/schema";
+import { eq, inArray, and } from "drizzle-orm";
 
 const router = Router();
 
-// Helper function to validate URLs
 function isValidUrl(value: string): boolean {
   try {
     new URL(value);
@@ -13,104 +14,135 @@ function isValidUrl(value: string): boolean {
   }
 }
 
-// READ
+function isValidCategory(category: any): category is "blacklist" | "whitelist" {
+  return category === "blacklist" || category === "whitelist";
+}
+
+// ==================== READ ====================
 router.get("/url", async (req: Request, res: Response) => {
   const { id, category } = req.query;
 
   try {
-    let result;
-    if (id) {
-      result = await pool.query("SELECT * FROM firewall_urls WHERE id=$1", [id]);
-    } else if (category) {
-      result = await pool.query("SELECT * FROM firewall_urls WHERE category=$1", [category]);
+    let rows;
+
+    if (id !== undefined) {
+      rows = await db.select().from(firewallUrls).where(eq(firewallUrls.id, Number(id)));
+    } else if (category !== undefined) {
+      if (!isValidCategory(category)) {
+        return res.status(400).json({ error: "Invalid category" });
+      }
+      rows = await db.select().from(firewallUrls).where(eq(firewallUrls.category, category));
     } else {
-      result = await pool.query("SELECT * FROM firewall_urls");
+      rows = await db.select().from(firewallUrls);
     }
-    res.json(result.rows);
+
+    return res.json(rows);
   } catch (err) {
     console.error(err);
-    res.status(500).send("Database error");
+    return res.status(500).json({ error: "DB error" });
   }
 });
 
-// CREATE
+// ==================== CREATE ====================
 router.post("/url", async (req: Request, res: Response) => {
   const { values, mode } = req.body;
 
   if (!values || !Array.isArray(values) || !mode) {
-    return res.status(400).send("values (array) and mode are required");
+    return res.status(400).json({ error: "values (array) and mode are required" });
   }
 
-  if (!values.every(v => typeof v === "string" && isValidUrl(v))) {
-    return res.status(400).send("All values must be valid URLs");
+  if (!isValidCategory(mode)) {
+    return res.status(400).json({ error: "Invalid category" });
+  }
+
+  if (!values.every((v: string) => typeof v === "string" && isValidUrl(v))) {
+    return res.status(400).json({ error: "All values must be valid URLs" });
   }
 
   try {
-    const insertedValues = [];
+    const insertedValues: string[] = [];
+
     for (const url of values) {
-      const result = await pool.query(
-        "INSERT INTO firewall_urls (category, url) VALUES ($1, $2) RETURNING url",
-        [mode, url]
-      );
-      insertedValues.push(result.rows[0].url);
+      const [inserted] = await db
+        .insert(firewallUrls)
+        .values({ category: mode, url })
+        .returning({ url: firewallUrls.url });
+
+      insertedValues.push(inserted.url);
     }
 
-    res.status(201).json({
+    return res.status(201).json({
       type: "url",
       mode,
       values: insertedValues,
-      status: "success"
+      status: "success",
     });
   } catch (err) {
     console.error(err);
-    res.status(500).send("Database error");
+    return res.status(500).json({ error: "DB error" });
   }
 });
 
-// UPDATE
+// ==================== UPDATE ====================
 router.put("/url", async (req: Request, res: Response) => {
   const { id, category, url } = req.body;
-  if (!id || !category || !url) return res.status(400).send("id, category and url are required");
+
+  if (!id || !category || !url) {
+    return res.status(400).json({ error: "id, category and url are required" });
+  }
+
+  if (!isValidCategory(category)) {
+    return res.status(400).json({ error: "Invalid category" });
+  }
 
   if (!isValidUrl(url)) {
-    return res.status(400).send("Invalid URL");
+    return res.status(400).json({ error: "Invalid URL" });
   }
 
   try {
-    const result = await pool.query(
-      "UPDATE firewall_urls SET category=$1, url=$2 WHERE id=$3 RETURNING *",
-      [category, url, id]
-    );
-    res.json(result.rows[0]);
+    const [updated] = await db
+      .update(firewallUrls)
+      .set({ category, url })
+      .where(eq(firewallUrls.id, Number(id)))
+      .returning();
+
+    if (!updated) {
+      return res.status(404).json({ error: "Record not found" });
+    }
+
+    return res.json(updated);
   } catch (err) {
     console.error(err);
-    res.status(500).send("Database error");
+    return res.status(500).json({ error: "DB error" });
   }
 });
 
-// DELETE
+// ==================== DELETE ====================
 router.delete("/url", async (req: Request, res: Response) => {
   const { values, mode } = req.body;
 
   if (!values || !Array.isArray(values) || !mode) {
-    return res.status(400).send("values (array) and mode are required");
+    return res.status(400).json({ error: "values (array) and mode are required" });
+  }
+
+  if (!isValidCategory(mode)) {
+    return res.status(400).json({ error: "Invalid category" });
   }
 
   try {
-    await pool.query(
-      `DELETE FROM firewall_urls WHERE url = ANY($1) AND category = $2`,
-      [values, mode]
-    );
+    await db
+      .delete(firewallUrls)
+      .where(and(inArray(firewallUrls.url, values), eq(firewallUrls.category, mode)));
 
-    res.json({
+    return res.json({
       type: "url",
       mode,
       values,
-      status: "success"
+      status: "success",
     });
   } catch (err) {
     console.error(err);
-    res.status(500).send("Database error");
+    return res.status(500).json({ error: "DB error" });
   }
 });
 

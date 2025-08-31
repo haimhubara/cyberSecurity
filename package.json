@@ -2,24 +2,33 @@
   "name": "cyber-project",
   "version": "1.0.0",
   "scripts": {
-    "dev": "nodemon --exec ts-node ./src/server.ts",
+   "dev": "nodemon --watch 'src/**/*.ts' --exec tsx ./src/server.ts",
     "build": "tsc",
-    "start": "node ./dist/server.js"
+    "start": "node ./dist/server.js",
+    "db:generate": "npx drizzle-kit generate --config ./src/drizzle.config.ts",
+    "db:drop": "npx drizzle-kit drop --config ./src/drizzle.config.ts",
+    "db:migrate": "npx drizzle-kit migrate --config ./src/drizzle.config.ts",
+    "db:data": "npx drizzle-kit studio --config ./src/drizzle.config.ts"
   },
-  "type": "commonjs",
+  "type": "module",
   "dependencies": {
     "dotenv": "^17.2.1",
+    "drizzle-orm": "^0.44.5",
     "express": "^5.1.0",
     "pg": "^8.16.3",
+    "postgres": "^3.4.7",
     "winston": "^3.17.0",
     "zod": "^4.1.5"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",
+    "@types/node": "^24.3.0",
     "@types/pg": "^8.15.5",
     "@types/winston": "^2.4.4",
+    "drizzle-kit": "^0.31.4",
     "nodemon": "^3.1.10",
     "ts-node": "^10.9.2",
+    "tsx": "^4.20.5",
     "typescript": "^5.9.2"
   }
 }

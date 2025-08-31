@@ -1,33 +1,28 @@
-import { Pool } from "pg";
+import postgres from "postgres";
+import { drizzle } from "drizzle-orm/postgres-js";
 import config from "./env";
-import logger from "./logger";
+import * as schema from "../drizzle/schema";
 
-export const pool = new Pool({
-  connectionString: config.databaseUri,
-});
+const MAX_ATTEMPTS = 5;
 
-let attempt = 0;
+let sql: ReturnType<typeof postgres>;
 
-
-async function connectWithRetry() {
+async function connectWithRetry(attempt = 1) {
   try {
-    await pool.query("SELECT 1");
-    logger.info("Connected to database successfully!");
-     attempt = 0; // reset counter
+    sql = postgres(config.databaseUri, { max: 10, idle_timeout: 30 });
+    await sql`SELECT 1`;
+    console.log("Connected to database!");
   } catch (err) {
-    attempt++;
-    const delay = Math.min(
-      config.dbConnectionInterval * 2 ** (attempt - 1),
-      30000 // cap at 30 seconds
-    );
-    logger.error(`DB connection failed: ${err}`);
-    logger.info(`Retrying in ${config.dbConnectionInterval}ms...`);
-
-    setTimeout(connectWithRetry,  config.dbConnectionInterval);
+    if (attempt < MAX_ATTEMPTS) {
+      console.warn(`Connection failed. Retrying in 2s... (Attempt ${attempt})`);
+      await new Promise(res => setTimeout(res, 2000));
+      await connectWithRetry(attempt + 1);
+    } else {
+      throw new Error("Could not connect to database after multiple attempts.");
+    }
   }
 }
 
-connectWithRetry();
-
-
-export default pool;
+await connectWithRetry(); 
+export const db = drizzle(sql!, { schema });
+export default db;
