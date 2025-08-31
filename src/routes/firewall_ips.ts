@@ -1,39 +1,56 @@
 import { Router, Request, Response } from "express";
-import { pool } from "../db";
+import db from "../config/db";
+import { firewallIps } from "../drizzle/schema";
 import net from "net";
+import { eq, inArray, and } from "drizzle-orm";
 
 const router = Router();
 
+// פונקציה לבדוק תקינות IP
 function isValidIP(ip: string): boolean {
-  return net.isIP(ip) !== 0; 
+  return net.isIP(ip) !== 0;
 }
 
-// READ
+// פונקציה לבדוק תקינות category
+function isValidCategory(category: any): category is "blacklist" | "whitelist" {
+  return category === "blacklist" || category === "whitelist";
+}
+
+// ==================== READ ====================
 router.get("/ip", async (req: Request, res: Response) => {
   const { id, category } = req.query;
 
   try {
-    let result;
-    if (id) {
-      result = await pool.query("SELECT * FROM firewall_ips WHERE id=$1", [id]);
-    } else if (category) {
-      result = await pool.query("SELECT * FROM firewall_ips WHERE category=$1", [category]);
+    let rows;
+
+    if (id !== undefined) {
+      rows = await db.select().from(firewallIps).where(eq(firewallIps.id, Number(id)));
+    } else if (category !== undefined) {
+      if (!isValidCategory(category)) {
+        return res.status(400).json({ error: "Invalid category" });
+      }
+      rows = await db.select().from(firewallIps).where(eq(firewallIps.category, category));
     } else {
-      result = await pool.query("SELECT * FROM firewall_ips");
+      rows = await db.select().from(firewallIps);
     }
-    res.json(result.rows);
+
+    return res.json(rows);
   } catch (err) {
     console.error(err);
-    res.status(500).send("Database error");
+    return res.status(500).json({ error: "DB error" });
   }
 });
 
-// CREATE
+// ==================== CREATE ====================
 router.post("/ip", async (req: Request, res: Response) => {
   const { values, mode } = req.body;
 
   if (!values || !Array.isArray(values) || !mode) {
-    return res.status(400).send("values (array) and mode are required");
+    return res.status(400).json({ error: "values (array) and mode are required" });
+  }
+
+  if (!isValidCategory(mode)) {
+    return res.status(400).json({ error: "Invalid category" });
   }
 
   try {
@@ -44,31 +61,36 @@ router.post("/ip", async (req: Request, res: Response) => {
         return res.status(400).json({ error: `Invalid IP: ${ip}` });
       }
 
-      const result = await pool.query(
-        "INSERT INTO firewall_ips (category, ip) VALUES ($1, $2) RETURNING ip",
-        [mode, ip]
-      );
-      insertedValues.push(result.rows[0].ip);
+      const [inserted] = await db
+        .insert(firewallIps)
+        .values({ category: mode, ip })
+        .returning({ ip: firewallIps.ip });
+
+      insertedValues.push(inserted.ip);
     }
 
-    res.status(201).json({
+    return res.status(201).json({
       type: "ip",
       mode,
       values: insertedValues,
-      status: "success"
+      status: "success",
     });
   } catch (err) {
     console.error(err);
-    res.status(500).send("Database error");
+    return res.status(500).json({ error: "DB error" });
   }
 });
 
-// UPDATE
+// ==================== UPDATE ====================
 router.put("/ip", async (req: Request, res: Response) => {
   const { id, category, ip } = req.body;
 
   if (!id || !category || !ip) {
-    return res.status(400).send("id, category and ip are required");
+    return res.status(400).json({ error: "id, category and ip are required" });
+  }
+
+  if (!isValidCategory(category)) {
+    return res.status(400).json({ error: "Invalid category" });
   }
 
   if (!isValidIP(ip)) {
@@ -76,45 +98,49 @@ router.put("/ip", async (req: Request, res: Response) => {
   }
 
   try {
-    const result = await pool.query(
-      "UPDATE firewall_ips SET category=$1, ip=$2 WHERE id=$3 RETURNING *",
-      [category, ip, id]
-    );
+    const [updated] = await db
+      .update(firewallIps)
+      .set({ category, ip })
+      .where(eq(firewallIps.id, Number(id)))
+      .returning();
 
-    if (result.rows.length === 0) {
+    if (!updated) {
       return res.status(404).json({ error: "Record not found" });
     }
 
-    res.json(result.rows[0]);
+    return res.json(updated);
   } catch (err) {
     console.error(err);
-    res.status(500).send("Database error");
+    return res.status(500).json({ error: "DB error" });
   }
 });
 
-// DELETE
+// ==================== DELETE ====================
 router.delete("/ip", async (req: Request, res: Response) => {
   const { values, mode } = req.body;
 
   if (!values || !Array.isArray(values) || !mode) {
-    return res.status(400).send("values (array) and mode are required");
+    return res.status(400).json({ error: "values (array) and mode are required" });
+  }
+
+  if (!isValidCategory(mode)) {
+    return res.status(400).json({ error: "Invalid category" });
   }
 
   try {
-    await pool.query(
-      `DELETE FROM firewall_ips WHERE ip = ANY($1) AND category = $2`,
-      [values, mode]
-    );
+    await db
+      .delete(firewallIps)
+      .where(and(inArray(firewallIps.ip, values), eq(firewallIps.category, mode)));
 
-    res.json({
+    return res.json({
       type: "ip",
       mode,
       values,
-      status: "success"
+      status: "success",
     });
   } catch (err) {
     console.error(err);
-    res.status(500).send("Database error");
+    return res.status(500).json({ error: "DB error" });
   }
 });
 

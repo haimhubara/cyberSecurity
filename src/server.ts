@@ -1,18 +1,21 @@
-import express, { Request, Response } from 'express';
-import firewallIPSRouter from "./routes/firewall_ips";
-import firewallURLRouter from "./routes/firewall_url";
-import firewallPortsRouter from "./routes/firewall_ports"; 
-import firewallRulesRouter from "./routes/firewall_rules"; 
+import app from "./app";
+import config from "./config/env"; 
+import db from "./config/db";
+import logger from "./config/logger";
 
-const app = express();
-app.use(express.json());
-app.use("/api/firewall", firewallIPSRouter);
-app.use("/api/firewall", firewallURLRouter);
-app.use("/api/firewall", firewallPortsRouter);
-app.use("/api/firewall", firewallRulesRouter);
+const PORT = config.port;
 
-// app.get('/', (req: Request, res: Response) => {
-//   res.send('Hello, World!');
-// });
+app.listen(PORT, async () => {
+  logger.info(`Server running on http://localhost:${PORT}`);
 
-export default app;
+  try {
+    const result = await db.execute(`SELECT current_database()`);
+    logger.info(`Connected to database: ${result[0].current_database}`);
+  } catch (err) {
+    if (err instanceof Error) {
+      logger.error(`Error checking database: ${err.message}\n${err.stack}`);
+    } else {
+      logger.error(`Error checking database: ${err}`);
+    }
+  }
+});

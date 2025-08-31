@@ -1,58 +1,60 @@
 import { Router, Request, Response } from "express";
-import { pool } from "../db";
+import db from "../config/db";
+import { firewallIps, firewallUrls, firewallPorts } from "../drizzle/schema";
+import { eq, inArray } from "drizzle-orm";
 
 const router = Router();
 
-// GET all rules
+// ==================== GET all rules ====================
 router.get("/rules", async (_req: Request, res: Response) => {
   try {
-    const [ipsResult, urlsResult, portsResult] = await Promise.all([
-      pool.query("SELECT id, ip AS value, active, category FROM firewall_ips"),
-      pool.query("SELECT id, url AS value, active, category FROM firewall_urls"),
-      pool.query("SELECT id, port AS value, active, category FROM firewall_ports")
+    const [ips, urls, ports] = await Promise.all([
+      db.select().from(firewallIps),
+      db.select().from(firewallUrls),
+      db.select().from(firewallPorts),
     ]);
 
     const formatByCategory = (rows: any[]) => ({
       blacklist: rows.filter(r => r.category === "blacklist"),
-      whitelist: rows.filter(r => r.category === "whitelist")
+      whitelist: rows.filter(r => r.category === "whitelist"),
     });
 
     res.json({
-      ips: formatByCategory(ipsResult.rows),
-      urls: formatByCategory(urlsResult.rows),
-      ports: formatByCategory(portsResult.rows)
+      ips: formatByCategory(ips),
+      urls: formatByCategory(urls),
+      ports: formatByCategory(ports),
     });
   } catch (err) {
     console.error(err);
-    res.status(500).send("Database error");
+    res.status(500).json({ error: "DB error" });
   }
 });
 
-// UPDATE rules activation
+// ==================== UPDATE rules activation ====================
 router.put("/rules", async (req: Request, res: Response) => {
   const { ips, urls, ports } = req.body;
-
   const updated: any[] = [];
 
   try {
-    // Helper function
-    const updateActive = async (table: string, ids: number[], active: boolean) => {
+    const updateActive = async (table: any, ids: number[], active: boolean, valueColumn: string) => {
       if (!ids || !ids.length) return;
-      const result = await pool.query(
-        `UPDATE ${table} SET active=$1 WHERE id = ANY($2) RETURNING id, ${table === "firewall_ports" ? "port" : table === "firewall_ips" ? "ip" : "url"} AS value, active`,
-        [active, ids]
-      );
-      updated.push(...result.rows);
+      const result = await db
+        .update(table)
+        .set({ active })
+        .where(inArray(table.id, ids))
+        .returning({ id: table.id, value: table[valueColumn], active: table.active });
+
+      updated.push(...result);
     };
 
-    if (ips) await updateActive("firewall_ips", ips.ids, ips.active);
-    if (urls) await updateActive("firewall_urls", urls.ids, urls.active);
-    if (ports) await updateActive("firewall_ports", ports.ids, ports.active);
+    if (ips) await updateActive(firewallIps, ips.ids, ips.active, "ip");
+    if (urls) await updateActive(firewallUrls, urls.ids, urls.active, "url");
+    if (ports) await updateActive(firewallPorts, ports.ids, ports.active, "port");
 
     res.json({ updated });
   } catch (err) {
     console.error(err);
-    res.status(500).send("Database error");
+    res.status(500).json({ error: "DB error" });
   }
 });
 
